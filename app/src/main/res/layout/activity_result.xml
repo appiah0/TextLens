@@ -3,144 +3,159 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="#000">
 
     <com.google.android.material.appbar.AppBarLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
-
         <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize" />
-
     </com.google.android.material.appbar.AppBarLayout>
 
+    <!-- Loading -->
+    <ProgressBar
+        android:id="@+id/progressBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone" />
+
+    <!-- Main content -->
     <LinearLayout
+        android:id="@+id/mainContent"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+        app:layout_behavior="@string/appbar_scrolling_view_behavior"
+        android:visibility="gone">
 
-        <!-- Image preview (collapsible) -->
-        <ImageView
-            android:id="@+id/imagePreview"
-            android:layout_width="match_parent"
-            android:layout_height="180dp"
-            android:scaleType="centerCrop"
-            android:adjustViewBounds="true"
-            android:background="#111111" />
-
-        <!-- Loading -->
-        <ProgressBar
-            android:id="@+id/progressBar"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_margin="32dp"
-            android:visibility="gone" />
-
-        <!-- Result container -->
-        <LinearLayout
-            android:id="@+id/layoutResult"
+        <!-- ── LENS MODE ── Image + word overlay -->
+        <FrameLayout
+            android:id="@+id/lensContainer"
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:padding="16dp">
+            android:layout_weight="1">
 
-            <!-- Word count -->
-            <TextView
-                android:id="@+id/tvWordCount"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="0 words · 0 chars"
-                android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:layout_marginBottom="8dp" />
-
-            <!-- Search bar (hidden by default) -->
-            <LinearLayout
-                android:id="@+id/layoutSearch"
+            <ImageView
+                android:id="@+id/imageView"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="8dp"
-                android:visibility="gone">
+                android:layout_height="match_parent"
+                android:scaleType="fitCenter"
+                android:background="#000" />
 
-                <com.google.android.material.textfield.TextInputLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
-                    android:hint="Filter lines...">
-
-                    <com.google.android.material.textfield.TextInputEditText
-                        android:id="@+id/etSearch"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content" />
-
-                </com.google.android.material.textfield.TextInputLayout>
-
-            </LinearLayout>
+            <!-- Word tap overlay -->
+            <com.textlens.app.TextOverlayView
+                android:id="@+id/overlayView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
 
             <!-- Empty state -->
             <TextView
                 android:id="@+id/tvEmpty"
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_gravity="center"
                 android:text="No text found in this image"
-                android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
-                android:textColor="?attr/colorOnSurfaceVariant"
-                android:gravity="center"
-                android:padding="32dp"
+                android:textColor="#fff"
+                android:textSize="16sp"
                 android:visibility="gone" />
 
-            <!-- Editable text result -->
-            <com.google.android.material.textfield.TextInputLayout
+            <!-- Selection bar (appears when words selected) -->
+            <LinearLayout
+                android:id="@+id/selectionBar"
                 android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
-                android:hint="Extracted text (editable)">
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="#CC000000"
+                android:orientation="horizontal"
+                android:padding="10dp"
+                android:gravity="center_vertical"
+                android:visibility="gone">
 
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etResult"
-                    android:layout_width="match_parent"
+                <TextView
+                    android:id="@+id/tvSelected"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:inputType="textMultiLine|textCapSentences"
-                    android:gravity="top"
-                    android:visibility="gone"
-                    android:minLines="6" />
+                    android:layout_weight="1"
+                    android:textColor="#fff"
+                    android:textSize="13sp"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:layout_marginEnd="8dp" />
 
-            </com.google.android.material.textfield.TextInputLayout>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnClearSel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="Clear"
+                    android:textSize="12sp"
+                    android:layout_marginEnd="6dp"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:textColor="#aaa" />
 
-        </LinearLayout>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnCopy"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:text="Copy"
+                    android:textSize="12sp"
+                    style="@style/Widget.Material3.Button.TonalButton" />
 
-        <!-- Action buttons row -->
+            </LinearLayout>
+
+        </FrameLayout>
+
+        <!-- ── TEXT MODE ── Editable text -->
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/textContainer"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone"
+            android:background="?attr/colorSurface"
+            android:padding="16dp">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/etResult"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="textMultiLine|textCapSentences"
+                android:gravity="top"
+                android:background="@null"
+                android:textSize="15sp"
+                android:minLines="10" />
+
+        </androidx.core.widget.NestedScrollView>
+
+        <!-- ── Bottom action bar ── -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:padding="12dp"
             android:background="?attr/colorSurface"
-            app:elevation="8dp">
+            android:padding="10dp"
+            android:elevation="8dp">
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnSearch"
+                android:id="@+id/btnSwitchMode"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="🔍 Filter"
+                android:text="📝 Text mode"
+                android:textSize="12sp"
                 android:layout_marginEnd="6dp"
                 style="@style/Widget.Material3.Button.OutlinedButton" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnCopyLines"
+                android:id="@+id/btnSelectAll"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="☑ Lines"
+                android:text="☑ All"
+                android:textSize="12sp"
                 android:layout_marginEnd="6dp"
                 style="@style/Widget.Material3.Button.OutlinedButton" />
 
@@ -150,15 +165,17 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="⬆ Share"
+                android:textSize="12sp"
                 android:layout_marginEnd="6dp"
                 style="@style/Widget.Material3.Button.OutlinedButton" />
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnCopy"
+                android:id="@+id/btnCopyAll"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="📋 Copy"
+                android:text="📋 Copy all"
+                android:textSize="12sp"
                 style="@style/Widget.Material3.Button" />
 
         </LinearLayout>
