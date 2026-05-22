@@ -4,17 +4,17 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import coil.load
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.textlens.app.databinding.ActivityResultBinding
@@ -24,10 +24,12 @@ import java.util.*
 class ResultActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityResultBinding
-    private var extractedText = ""
+    private var visionText: Text? = null
+    private var imageBitmap: Bitmap? = null
     private var imageUri: Uri? = null
+    private var mode = Mode.LENS // Start in lens mode
 
-    // ─── Lifecycle ────────────────────────────────────────────────────────────
+    enum class Mode { LENS, TEXT }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,20 +38,13 @@ class ResultActivity : AppCompatActivity() {
 
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        supportActionBar?.title = "Extracted Text"
+        supportActionBar?.title = "TextLens"
 
-        val uriString = intent.getStringExtra(EXTRA_IMAGE_URI)
-        if (uriString == null) {
-            toast("No image provided")
-            finish()
-            return
-        }
-
+        val uriString = intent.getStringExtra(EXTRA_IMAGE_URI) ?: run { finish(); return }
         imageUri = Uri.parse(uriString)
-        binding.imagePreview.load(imageUri)
 
-        setupTextEditor()
-        runOcr(imageUri!!)
+        setupButtons()
+        loadImageAndRunOcr()
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -57,186 +52,151 @@ class ResultActivity : AppCompatActivity() {
         return true
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            android.R.id.home -> { finish(); true }
-            R.id.action_copy_all -> { copyAll(); true }
-            R.id.action_share -> { shareText(); true }
-            R.id.action_clear -> { clearText(); true }
-            else -> super.onOptionsItemSelected(item)
+    override fun onOptionsItemSelected(item: MenuItem) = when (item.itemId) {
+        android.R.id.home -> { finish(); true }
+        R.id.action_copy_all -> { copyAll(); true }
+        R.id.action_select_all -> { selectAll(); true }
+        R.id.action_share -> { shareText(); true }
+        R.id.action_switch_mode -> { toggleMode(); true }
+        else -> super.onOptionsItemSelected(item)
+    }
+
+    // ─── Setup ────────────────────────────────────────────────────────────────
+
+    private fun setupButtons() {
+        binding.btnCopy.setOnClickListener { copySelected() }
+        binding.btnCopyAll.setOnClickListener { copyAll() }
+        binding.btnShare.setOnClickListener { shareText() }
+        binding.btnSelectAll.setOnClickListener { selectAll() }
+        binding.btnClearSel.setOnClickListener {
+            binding.overlayView.clearSelection()
+            updateSelectionBar("")
+        }
+        binding.btnSwitchMode.setOnClickListener { toggleMode() }
+
+        // Overlay selection callback
+        binding.overlayView.onSelectionChanged = { selectedText ->
+            updateSelectionBar(selectedText)
         }
     }
 
-    // ─── OCR ──────────────────────────────────────────────────────────────────
+    // ─── Load image + OCR ─────────────────────────────────────────────────────
 
-    private fun runOcr(uri: Uri) {
+    private fun loadImageAndRunOcr() {
         showLoading(true)
-
         try {
-            val image = InputImage.fromFilePath(this, uri)
+            val stream = contentResolver.openInputStream(imageUri!!)
+            imageBitmap = BitmapFactory.decodeStream(stream)
+            binding.imageView.setImageBitmap(imageBitmap)
 
-            // Bundled recognizer — works 100% offline
+            val image = InputImage.fromFilePath(this, imageUri!!)
             val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
             recognizer.process(image)
-                .addOnSuccessListener { visionText ->
+                .addOnSuccessListener { result ->
                     showLoading(false)
-                    extractedText = visionText.text
-
-                    if (extractedText.isBlank()) {
-                        showEmptyState()
+                    visionText = result
+                    if (result.text.isBlank()) {
+                        showEmpty()
                     } else {
-                        showResult(extractedText)
-                        saveToHistory(extractedText)
+                        saveToHistory(result.text)
+                        setupOverlay()
+                        showLensMode()
                     }
                 }
-                .addOnFailureListener { e ->
+                .addOnFailureListener {
                     showLoading(false)
-                    showError("OCR failed: ${e.message}")
+                    toast("OCR failed: ${it.message}")
                 }
         } catch (e: Exception) {
             showLoading(false)
-            showError("Could not load image: ${e.message}")
+            toast("Could not load image")
         }
     }
 
-    // ─── UI states ────────────────────────────────────────────────────────────
+    // ─── Overlay setup ────────────────────────────────────────────────────────
 
-    private fun showLoading(loading: Boolean) {
-        binding.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
-        binding.layoutResult.visibility = if (loading) View.GONE else View.VISIBLE
+    private fun setupOverlay() {
+        // Wait for imageView to be laid out so we have dimensions
+        binding.imageView.post {
+            val bmp = imageBitmap ?: return@post
+            val text = visionText ?: return@post
+            binding.overlayView.setOcrResult(
+                text, bmp,
+                binding.imageView.width,
+                binding.imageView.height
+            )
+        }
     }
 
-    private fun showResult(text: String) {
-        binding.tvEmpty.visibility = View.GONE
-        binding.etResult.visibility = View.VISIBLE
-        binding.etResult.setText(text)
-        updateWordCount(text)
-        binding.btnCopy.isEnabled = true
-        binding.btnShare.isEnabled = true
+    // ─── Mode switching ───────────────────────────────────────────────────────
+
+    private fun showLensMode() {
+        mode = Mode.LENS
+        binding.lensContainer.visibility = View.VISIBLE
+        binding.textContainer.visibility = View.GONE
+        binding.overlayView.visibility = View.VISIBLE
+        binding.btnSwitchMode.text = "📝 Text mode"
+        supportActionBar?.subtitle = "Tap words · Drag to select"
     }
 
-    private fun showEmptyState() {
-        binding.tvEmpty.visibility = View.VISIBLE
-        binding.etResult.visibility = View.GONE
-        binding.btnCopy.isEnabled = false
-        binding.btnShare.isEnabled = false
-        binding.tvWordCount.text = "No text found"
+    private fun showTextMode() {
+        mode = Mode.TEXT
+        binding.lensContainer.visibility = View.GONE
+        binding.textContainer.visibility = View.VISIBLE
+        binding.overlayView.visibility = View.GONE
+        binding.etResult.setText(visionText?.text ?: "")
+        binding.btnSwitchMode.text = "🔍 Lens mode"
+        supportActionBar?.subtitle = "Edit extracted text"
     }
 
-    private fun showError(msg: String) {
-        binding.tvEmpty.text = msg
-        binding.tvEmpty.visibility = View.VISIBLE
-        binding.etResult.visibility = View.GONE
+    private fun toggleMode() {
+        if (mode == Mode.LENS) showTextMode() else showLensMode()
     }
 
-    // ─── Text editor setup ────────────────────────────────────────────────────
+    // ─── Selection bar ────────────────────────────────────────────────────────
 
-    private fun setupTextEditor() {
-        // Live word count
-        binding.etResult.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) {
-                updateWordCount(s.toString())
-            }
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-        })
-
-        // Quick action buttons
-        binding.btnCopy.setOnClickListener { copyAll() }
-        binding.btnShare.setOnClickListener { shareText() }
-        binding.btnCopyLines.setOnClickListener { showCopyLinesDialog() }
-
-        // Search/filter
-        binding.btnSearch.setOnClickListener { toggleSearch() }
-        binding.etSearch.addTextChangedListener(object : TextWatcher {
-            override fun afterTextChanged(s: Editable?) { filterLines(s.toString()) }
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-        })
-    }
-
-    private fun updateWordCount(text: String) {
+    private fun updateSelectionBar(text: String) {
         if (text.isBlank()) {
-            binding.tvWordCount.text = "0 words · 0 chars"
-            return
+            binding.selectionBar.visibility = View.GONE
+        } else {
+            binding.selectionBar.visibility = View.VISIBLE
+            val preview = if (text.length > 40) text.take(40) + "…" else text
+            binding.tvSelected.text = "\"$preview\""
         }
-        val words = text.trim().split(Regex("\\s+")).size
-        val chars = text.length
-        binding.tvWordCount.text = "$words words · $chars chars"
     }
 
-    // ─── Copy options ─────────────────────────────────────────────────────────
+    // ─── Actions ──────────────────────────────────────────────────────────────
+
+    private fun copySelected() {
+        val text = if (mode == Mode.LENS)
+            binding.overlayView.getSelectedText()
+        else
+            binding.etResult.text.toString()
+
+        if (text.isBlank()) { toast("Nothing selected"); return }
+        copyToClipboard(text)
+        toast("Copied!")
+    }
 
     private fun copyAll() {
-        val text = binding.etResult.text.toString()
+        val text = visionText?.text ?: binding.etResult.text.toString()
         if (text.isBlank()) return
         copyToClipboard(text)
+        binding.overlayView.selectAll()
         toast("All text copied!")
     }
 
-    private fun copyToClipboard(text: String) {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("OCR Text", text))
-    }
-
-    private fun clearText() {
-        binding.etResult.setText("")
-        extractedText = ""
-    }
-
-    private fun showCopyLinesDialog() {
-        val text = binding.etResult.text.toString()
-        val lines = text.lines().filter { it.isNotBlank() }
-        if (lines.isEmpty()) return
-
-        val items = lines.take(50).toTypedArray() // Show up to 50 lines
-        val checked = BooleanArray(items.size) { true }
-
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Select lines to copy")
-            .setMultiChoiceItems(items, checked) { _, which, isChecked ->
-                checked[which] = isChecked
-            }
-            .setPositiveButton("Copy selected") { _, _ ->
-                val selected = items.filterIndexed { i, _ -> checked[i] }.joinToString("\n")
-                copyToClipboard(selected)
-                toast("${checked.count { it }} lines copied!")
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
-    }
-
-    // ─── Search/Filter ────────────────────────────────────────────────────────
-
-    private var searchVisible = false
-
-    private fun toggleSearch() {
-        searchVisible = !searchVisible
-        binding.layoutSearch.visibility = if (searchVisible) View.VISIBLE else View.GONE
-        if (!searchVisible) {
-            binding.etSearch.setText("")
-            showResult(extractedText) // Restore full text
+    private fun selectAll() {
+        if (mode == Mode.LENS) binding.overlayView.selectAll()
+        else {
+            binding.etResult.selectAll()
+            toast("All selected")
         }
     }
-
-    private fun filterLines(query: String) {
-        if (query.isBlank()) {
-            binding.etResult.setText(extractedText)
-            return
-        }
-        val filtered = extractedText.lines()
-            .filter { it.contains(query, ignoreCase = true) }
-            .joinToString("\n")
-        binding.etResult.setText(filtered)
-        updateWordCount(filtered)
-    }
-
-    // ─── Share ────────────────────────────────────────────────────────────────
 
     private fun shareText() {
-        val text = binding.etResult.text.toString()
-        if (text.isBlank()) return
+        val text = visionText?.text ?: return
         Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
@@ -244,26 +204,36 @@ class ResultActivity : AppCompatActivity() {
         }
     }
 
+    private fun copyToClipboard(text: String) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("OCR Text", text))
+    }
+
+    // ─── UI states ────────────────────────────────────────────────────────────
+
+    private fun showLoading(loading: Boolean) {
+        binding.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
+        binding.mainContent.visibility = if (loading) View.GONE else View.VISIBLE
+    }
+
+    private fun showEmpty() {
+        binding.tvEmpty.visibility = View.VISIBLE
+        binding.lensContainer.visibility = View.GONE
+    }
+
     // ─── History ─────────────────────────────────────────────────────────────
 
     private fun saveToHistory(text: String) {
         val prefs = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
         val existing = prefs.getStringSet(MainActivity.KEY_HISTORY, mutableSetOf())!!.toMutableSet()
-
         val timestamp = SimpleDateFormat("yyyyMMddHHmmss", Locale.US).format(Date())
-        val preview = text.take(200).replace("\n", " ")
-        val entry = "$timestamp|$preview"
-
+        val entry = "$timestamp|${text.take(200).replace("\n", " ")}"
         existing.add(entry)
-
-        // Keep only last 50 entries
         val trimmed = existing.sortedByDescending { it.substringBefore("|") }.take(50).toSet()
-
         prefs.edit().putStringSet(MainActivity.KEY_HISTORY, trimmed).apply()
     }
 
-    private fun toast(msg: String) =
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
     companion object {
         const val EXTRA_IMAGE_URI = "extra_image_uri"
